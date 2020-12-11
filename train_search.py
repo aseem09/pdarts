@@ -16,6 +16,7 @@ import copy
 from model_search import Network
 from genotypes import PRIMITIVES
 from genotypes import Genotype
+from architect import Architect
 
 # python train_search.py \\
 #        --tmp_data_dir /path/to/your/data \\
@@ -57,8 +58,8 @@ parser.add_argument('--cifar100', action='store_true', default=False, help='sear
 
 args = parser.parse_args()
 
-args.save = '/ceph/aseem-volume/full/search/05_4/logging'
-args.tmp_data_dir = '/ceph/aseem-volume/full/search/05_4/data'
+args.save = '/ceph/aseem-volume/full/search/05_12/logging'
+args.tmp_data_dir = '/ceph/aseem-volume/full/search/05_12/data'
 utils.create_exp_dir(args.save, scripts_to_save=glob.glob('*.py'))
 
 log_format = '%(asctime)s %(message)s'
@@ -150,7 +151,7 @@ def main():
         model_2 = model_2.cuda()
 
         logging.info("param size 1= %fMB", utils.count_parameters_in_MB(model_1))
-        logging.info("param size 1= %fMB", utils.count_parameters_in_MB(model_2))
+        logging.info("param size 2= %fMB", utils.count_parameters_in_MB(model_2))
 
         network_params_1 = []
         for k, v in model_1.named_parameters():
@@ -184,12 +185,14 @@ def main():
                 optimizer_1, float(args.epochs), eta_min=args.learning_rate_min)
 
         scheduler_2 = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer_1, float(args.epochs), eta_min=args.learning_rate_min)
+                optimizer_2, float(args.epochs), eta_min=args.learning_rate_min)
 
         sm_dim = -1
         epochs = args.epochs
         eps_no_arch = eps_no_archs[sp]
         scale_factor = 0.2
+
+        architect = Architect(model_1, model_2, network_params_1, network_params_2, criterion, args)
 
         for epoch in range(epochs):
             scheduler_1.step()
@@ -210,7 +213,7 @@ def main():
                 model_2.module.p = float(drop_rate[sp]) * (epochs - epoch - 1) / epochs
                 model_2.module.update_p()
 
-                train_acc_1, train_acc_2, train_obj = train(train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=False)
+                train_acc_1, train_acc_2, train_obj = train(architect, train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=False)
             else:
 
                 model_1.module.p = float(drop_rate[sp]) * np.exp(-(epoch - eps_no_arch) * scale_factor)
@@ -219,7 +222,7 @@ def main():
                 model_2.module.p = float(drop_rate[sp]) * np.exp(-(epoch - eps_no_arch) * scale_factor)
                 model_2.module.update_p()
 
-                train_acc_1, train_acc_2, train_obj = train(train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=True)
+                train_acc_1, train_acc_2, train_obj = train(architect, train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=True)
 
             logging.info('Train_acc %f %f', train_acc_1, train_acc_2)
             epoch_duration = time.time() - epoch_start
@@ -244,7 +247,7 @@ def main():
         normal_prob_1 = F.softmax(arch_param_1[0], dim=sm_dim).data.cpu().numpy()
 
         arch_param_2 = model_2.module.arch_parameters()
-        normal_prob_2 = F.softmax(arch_param_1[0], dim=sm_dim).data.cpu().numpy()
+        normal_prob_2 = F.softmax(arch_param_2[0], dim=sm_dim).data.cpu().numpy()
 
         for i in range(14):
             idxs_1 = []
@@ -279,7 +282,7 @@ def main():
                     idxs_2.append(j)
             if sp == len(num_to_keep) - 1:
                 drop_1 = get_min_k_no_zero(reduce_prob_1[i, :], idxs_1, num_to_drop[sp])
-                drop_2 = get_min_k_no_zero(reduce_prob_1[i, :], idxs_2, num_to_drop[sp])
+                drop_2 = get_min_k_no_zero(reduce_prob_2[i, :], idxs_2, num_to_drop[sp])
             else:
                 drop_1 = get_min_k(reduce_prob_1[i, :], num_to_drop[sp])
                 drop_2 = get_min_k(reduce_prob_2[i, :], num_to_drop[sp])
@@ -301,8 +304,10 @@ def main():
         if sp == len(num_to_keep) - 1:
             arch_param_1 = model_1.module.arch_parameters()
             arch_param_2 = model_2.module.arch_parameters()
+
             normal_prob_1 = F.softmax(arch_param_1[0], dim=sm_dim).data.cpu().numpy()
             normal_prob_2 = F.softmax(arch_param_2[0], dim=sm_dim).data.cpu().numpy()
+
             reduce_prob_1 = F.softmax(arch_param_1[1], dim=sm_dim).data.cpu().numpy()
             reduce_prob_2 = F.softmax(arch_param_2[1], dim=sm_dim).data.cpu().numpy()
 
@@ -421,7 +426,7 @@ def main():
                 genotype_2 = parse_network(switches_normal_2, switches_reduce_2)
                 logging.info(genotype_2)
 
-def train(train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=True):
+def train(architect, train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=True):
     objs = utils.AvgrageMeter()
     top1_1 = utils.AvgrageMeter()
     top5_1 = utils.AvgrageMeter()
@@ -451,15 +456,17 @@ def train(train_queue, valid_queue, model_1, model_2, network_params_1, network_
 
             optimizer_a_1.zero_grad()
             optimizer_a_2.zero_grad()
-
+            
             logits_1 = model_1(input_search)
-            loss_a_1 = criterion(logits_1, target_search)
             logits_2 = model_2(input_search)
-            loss_a_2 = criterion(logits_2, target_search)
 
-            loss_a = loss_a_1 + loss_a_2
-            loss_a.backward()
+            loss_1 = criterion(logits_1, target_search)
+            loss_2 = criterion(logits_2, target_search)
 
+            loss = loss_1 + loss_2
+            loss.backward()
+            # architect.step(input, target, input_search, target_search, lr_1, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2)
+            
             nn.utils.clip_grad_norm_(model_1.module.arch_parameters(), args.grad_clip)
             nn.utils.clip_grad_norm_(model_2.module.arch_parameters(), args.grad_clip)
 
@@ -469,26 +476,23 @@ def train(train_queue, valid_queue, model_1, model_2, network_params_1, network_
         optimizer_1.zero_grad()
         optimizer_2.zero_grad()
 
+        # loss = architect.compute_loss(input, target)
         logits_1 = model_1(input)
-        loss_1 = criterion(logits_1, target)
-
         logits_2 = model_2(input)
+
+        loss_1 = criterion(logits_1, target)
         loss_2 = criterion(logits_2, target)
 
-        logits_1 = F.softmax(logits_1, dim=1)
-        logits_2 = F.softmax(logits_2, dim=1)
-        logits_3 = torch.log10(F.softmax(logits_1, dim=1))
-        logits_4 = torch.log10(F.softmax(logits_2, dim=1))
-
-        loss_add = torch.sum(logits_2*logits_3*-1) + torch.sum(logits_1*logits_4*-1)
-
-        loss = (loss_1 + loss_2) + c_lambda*(loss_add)
+        loss = loss_1 + loss_2
         loss.backward()
 
         nn.utils.clip_grad_norm_(network_params_1, args.grad_clip)
         nn.utils.clip_grad_norm_(network_params_2, args.grad_clip)
         optimizer_1.step()
         optimizer_2.step()
+
+        # logits_1 = model_1(input)
+        # logits_2 = model_2(input)
 
         prec1_1, prec5_1 = utils.accuracy(logits_1, target, topk=(1, 5))
         prec1_2, prec5_2 = utils.accuracy(logits_2, target, topk=(1, 5))
