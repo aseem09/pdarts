@@ -16,7 +16,6 @@ import copy
 from model_search import Network
 from genotypes import PRIMITIVES
 from genotypes import Genotype
-from architect import Architect
 
 # python train_search.py \\
 #        --tmp_data_dir /path/to/your/data \\
@@ -53,7 +52,7 @@ parser.add_argument('--note', type=str, default='try', help='note for this run')
 parser.add_argument('--dropout_rate', action='append', default=['0.1', '0.4', '0.7'], help='dropout rate of skip connect')
 parser.add_argument('--add_width', action='append', default=['0'], help='add channels')
 parser.add_argument('--add_layers', action='append', default=['0', '6', '12'], help='add layers')
-parser.add_argument('--c_lambda', type=float, default=0.05, help='cooperative learning coefficient')
+parser.add_argument('--c_lambda', type=float, default=0, help='cooperative learning coefficient')
 parser.add_argument('--cifar100', action='store_true', default=False, help='search with cifar100 dataset')
 
 args = parser.parse_args()
@@ -192,8 +191,6 @@ def main():
         eps_no_arch = eps_no_archs[sp]
         scale_factor = 0.2
 
-        architect = Architect(model_1, model_2, network_params_1, network_params_2, criterion, args)
-
         for epoch in range(epochs):
             scheduler_1.step()
             scheduler_2.step()
@@ -213,7 +210,7 @@ def main():
                 model_2.module.p = float(drop_rate[sp]) * (epochs - epoch - 1) / epochs
                 model_2.module.update_p()
 
-                train_acc_1, train_acc_2, train_obj = train(architect, train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=False)
+                train_acc_1, train_acc_2, train_obj = train(train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=False)
             else:
 
                 model_1.module.p = float(drop_rate[sp]) * np.exp(-(epoch - eps_no_arch) * scale_factor)
@@ -222,7 +219,7 @@ def main():
                 model_2.module.p = float(drop_rate[sp]) * np.exp(-(epoch - eps_no_arch) * scale_factor)
                 model_2.module.update_p()
 
-                train_acc_1, train_acc_2, train_obj = train(architect, train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=True)
+                train_acc_1, train_acc_2, train_obj = train(train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=True)
 
             logging.info('Train_acc %f %f', train_acc_1, train_acc_2)
             epoch_duration = time.time() - epoch_start
@@ -426,7 +423,7 @@ def main():
                 genotype_2 = parse_network(switches_normal_2, switches_reduce_2)
                 logging.info(genotype_2)
 
-def train(architect, train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=True):
+def train(train_queue, valid_queue, model_1, model_2, network_params_1, network_params_2, criterion, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2, lr_1, lr_2, train_arch=True):
     objs = utils.AvgrageMeter()
     top1_1 = utils.AvgrageMeter()
     top5_1 = utils.AvgrageMeter()
@@ -465,7 +462,6 @@ def train(architect, train_queue, valid_queue, model_1, model_2, network_params_
 
             loss = loss_1 + loss_2
             loss.backward()
-            # architect.step(input, target, input_search, target_search, lr_1, optimizer_1, optimizer_2, optimizer_a_1, optimizer_a_2)
             
             nn.utils.clip_grad_norm_(model_1.module.arch_parameters(), args.grad_clip)
             nn.utils.clip_grad_norm_(model_2.module.arch_parameters(), args.grad_clip)
@@ -476,23 +472,27 @@ def train(architect, train_queue, valid_queue, model_1, model_2, network_params_
         optimizer_1.zero_grad()
         optimizer_2.zero_grad()
 
-        # loss = architect.compute_loss(input, target)
         logits_1 = model_1(input)
-        logits_2 = model_2(input)
-
         loss_1 = criterion(logits_1, target)
+
+        logits_2 = model_2(input)
         loss_2 = criterion(logits_2, target)
 
-        loss = loss_1 + loss_2
+        logits_1 = F.softmax(logits_1, dim=1)
+        logits_2 = F.softmax(logits_2, dim=1)
+        logits_3 = torch.log10(F.softmax(logits_1, dim=1))
+        logits_4 = torch.log10(F.softmax(logits_2, dim=1))
+
+        loss_add = torch.sum(logits_2*logits_3*-1) + \
+            torch.sum(logits_1*logits_4*-1)
+
+        loss = (loss_1 + loss_2) + (args.c_lambda)*(loss_add)
         loss.backward()
 
         nn.utils.clip_grad_norm_(network_params_1, args.grad_clip)
         nn.utils.clip_grad_norm_(network_params_2, args.grad_clip)
         optimizer_1.step()
         optimizer_2.step()
-
-        # logits_1 = model_1(input)
-        # logits_2 = model_2(input)
 
         prec1_1, prec5_1 = utils.accuracy(logits_1, target, topk=(1, 5))
         prec1_2, prec5_2 = utils.accuracy(logits_2, target, topk=(1, 5))
