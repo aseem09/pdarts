@@ -47,8 +47,8 @@ parser.add_argument('--cifar100', action='store_true', default=False, help='sear
 
 args = parser.parse_args()
 
-args.save = '/ceph/aseem-volume/full/search/05_17/logging'
-args.tmp_data_dir = '/ceph/aseem-volume/full/search/05_17/data'
+args.save = '/ceph/aseem-volume/full/search/05_18/logging'
+args.tmp_data_dir = '/ceph/aseem-volume/full/search/05_18/data'
 utils.create_exp_dir(args.save, scripts_to_save=glob.glob('*.py'))
 
 log_format = '%(asctime)s %(message)s'

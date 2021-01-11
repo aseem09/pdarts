@@ -40,7 +40,7 @@ parser.add_argument('--cutout_length', type=int, default=16, help='cutout length
 parser.add_argument('--drop_path_prob', type=float, default=0.3, help='drop path probability')
 parser.add_argument('--save', type=str, default='/tmp/checkpoints/', help='experiment name')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
-parser.add_argument('--arch', type=str, default='CL_11', help='which architecture to use')
+parser.add_argument('--arch', type=str, default='CL_16', help='which architecture to use')
 parser.add_argument('--grad_clip', type=float, default=5, help='gradient clipping')
 parser.add_argument('--tmp_data_dir', type=str, default='/tmp/cache/', help='temp data dir')
 parser.add_argument('--note', type=str, default='try', help='note for this run')
@@ -48,8 +48,8 @@ parser.add_argument('--cifar100', action='store_true', default=False, help='if u
 
 args, unparsed = parser.parse_known_args()
 
-args.save = '/ceph/aseem-volume/full/eval/05_15/logging'
-args.tmp_data_dir = '/ceph/aseem-volume/full/eval/05_15/data'
+args.save = '/ceph/aseem-volume/full/eval/05_19/logging'
+args.tmp_data_dir = '/ceph/aseem-volume/full/eval/05_19/data'
 utils.create_exp_dir(args.save, scripts_to_save=glob.glob('*.py'))
 
 log_format = '%(asctime)s %(message)s'
